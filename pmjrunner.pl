@@ -140,7 +140,13 @@ $main::LOG_FILE = "log.txt";
 $main::CONFIG_FILE = ".pmj-config.txt";
 $main::STATUS_FILE = ".pmj-status.txt";
 $main::TMP_FILE = ".pmj-temp.txt";
+
+#-
+# Define global constants / parms
+#-
+$main::PMJ_VERSION = '1.4.4';
 $main::MAX_JOB_RUN = 999999;
+$main::MAX_FILE_SIZE = 1 * 1024 * 1024; # 1MB
 
 #-
 # Set command line options
@@ -162,7 +168,7 @@ my $options = GetOptions(
 #-
 # Parse command line arguments
 #-
-print "\npmjrunner v1.4.3\n";
+print "\npmjrunner v$main::PMJ_VERSION\n";
 print "(c)2012 State of Wyoming\n";
 print "Licensed under the Apache License, Version 2.0\n";
 if ($debug) { print "info: --debug (display debug info) option selected.\n"; }
@@ -871,29 +877,44 @@ sub append_to_log {
 }
 
 #-
-# Build log file list (CSV)
+# Build log file list (array)
 #-
 sub build_logfile_list {
 	# determine which step log files to include
-	my $list = '';
+	my @list;
+	if ($debug) { print "info: building list log file attachments...\n"; }
 	for (my $step_i = 0; $step_i < $main::TOTAL_STEPS; $step_i++) {
 		my $step_status = $main::statuses[$step_i];
+		my $fn = derive_step_filename($step_i + 1, $step_status);
+		if ($debug) { print "info: log file ($fn) - "; }
+		# only failed steps or successful with email option qualify
 		if ($step_status eq 'FAILED' or ($step_status eq 'SUCCEEDED' and $main::STEPS[$step_i]{email_log_file} eq 'YES')) {
-			$list = $list . "," . derive_step_filename($step_i + 1, $step_status);
+			# make sure log file does not exceed file size limit
+			my $fs = -s $fn;
+			if ($fs <= $main::MAX_FILE_SIZE) {
+				push(@list, $fn);
+				if ($debug) { print "included.\n"; }
+			} else {
+				my $kb = int($fs / 1024);
+				if ($debug) { print "skipped since log file too large (" . $kb . "KB).\n"; }
+				append_to_log("WARNING: log file ($fn) not attached to email since it's too large (" . $kb . "KB)");
+			}
+		} else {
+			if ($debug) { print "skipped.\n"; }
 		}
 	}
-	# strip leading comma from list
-	$list =~ s/^,//g;
-	return $list;
+	return @list;
 }
 
 #-
 # Send email
 # $_[0] - subject
 # $_[1] - message body text filename
-# $_[2] - attachment filenames, comma separated (optional)
+# $_[2] - array of attachment filenames (optional)
 #-
-sub send_email ($$;$) {
+sub send_email {
+	my($subject, $body, @attachments) = @_;
+
 	# return if no subscribers
 	if ($main::EMAIL_SUBSCRIBERS eq '') {
 		if ($debug) { print "info: no email subscribers, so no email sent.\n"; }
@@ -907,22 +928,21 @@ sub send_email ($$;$) {
 	my $cmd;
 	if ($^O eq 'MSWin32') {
 		# Windows program blat.exe
-		my $bodyfile = $_[1];
+		my $bodyfile = $body;
 		$bodyfile =~ s/\/+/\\/g; # adjust file's path to windows form
-		$cmd = "blat \"$bodyfile\" -t $tolist -s \"$_[0]\"";
-		if (defined $_[2] and $_[2] ne '') {
-			my $filelist = $_[2];
+		$cmd = "blat \"$bodyfile\" -t $tolist -s \"$subject\"";
+		if (scalar(@attachments) > 0) {
+			my $filelist = join(',', @attachments);
 			$filelist =~ s/\/+/\\/g; # adjust file's path to windows form
 			$cmd = $cmd . " -attach \"$filelist\"";
 		}
 	} else {
 		# assume standard Linux mutt program
-		if (defined $_[2] and $_[2] ne '') {
-			my $filelist = $_[2];
-			$filelist =~ s/,/ -a /g;
-			$cmd = "mutt -s \"$_[0]\" -a $filelist -- $tolist < \"$_[1]\"";
+		if (scalar(@attachments) > 0) {
+			my $filelist = join(' -a ', @attachments);
+			$cmd = "mutt -s \"$subject\" -a $filelist -- $tolist < \"$body\"";
 		} else {
-			$cmd = "mutt -s \"$_[0]\" -- $tolist < \"$_[1]\"";
+			$cmd = "mutt -s \"$subject\" -- $tolist < \"$body\"";
 		}
 	}
 	# send the email
