@@ -89,6 +89,9 @@ help from seasoned system admin's and developers of real-world high
 volume production systems here at the State. A lot of their
 knowledge is baked-in to pmjrunner's simple, yet powerful design.
 
+v1.4.4 2012.12.14
+o Added email log file attachment size limit
+
 v1.4.3 2012.10.26
 o Fixed sort when listing all log files
 o Fixed display log file option
